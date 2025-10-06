@@ -1,124 +1,88 @@
 <?php
-/** Запуск сессии */
-session_start();
+// Проверяем авторизацию через новую систему
+require_once('../auth/includes/config.php');
+require_once('../auth/includes/auth-functions.php');
 
-/** подключение фалйа настроек */
-require_once('settings.php') ;
-require_once('tools/tools.php') ;
+// Подключаем настройки базы данных
+require_once('settings.php');
+require_once('tools/tools.php');
+
+// Инициализация системы авторизации
+initAuthSystem();
+
+// Запуск сессии
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+$auth = new AuthManager();
+$session = $auth->checkSession();
+
+if (!$session) {
+    header('Location: ../auth/login.php');
+    exit;
+}
+
+// Получаем информацию о пользователе
+$db = Database::getInstance();
+$users = $db->select("SELECT * FROM auth_users WHERE id = ?", [$session['user_id']]);
+$user = $users[0] ?? null;
+
+// Если пользователь не найден, используем данные из сессии
+if (!$user) {
+    $user = [
+        'full_name' => $session['full_name'] ?? 'Пользователь',
+        'phone' => $session['phone'] ?? ''
+    ];
+}
+
+$userDepartments = $db->select("
+    SELECT ud.department_code, r.name as role_name, r.display_name as role_display_name
+    FROM auth_user_departments ud
+    JOIN auth_roles r ON ud.role_id = r.id
+    WHERE ud.user_id = ?
+", [$session['user_id']]);
+
+// Определяем текущий цех
+$currentDepartment = $_SESSION['auth_department'] ?? 'U4';
+
+// Проверяем, есть ли у пользователя доступ к цеху U4
+$hasAccessToU4 = false;
+$userRole = null;
+foreach ($userDepartments as $dept) {
+    if ($dept['department_code'] === 'U4') {
+        $hasAccessToU4 = true;
+        $userRole = $dept['role_name'];
+        break;
+    }
+}
+
+// Если нет доступа к U4, показываем предупреждение, но не блокируем
+if (!$hasAccessToU4) {
+    echo "<div style='background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin: 10px; border-radius: 5px;'>";
+    echo "<h3>⚠️ Внимание: Нет доступа к цеху U4</h3>";
+    echo "<p>Ваши доступные цеха: ";
+    $deptNames = [];
+    foreach ($userDepartments as $dept) {
+        $deptNames[] = $dept['department_code'] . " (" . $dept['role_name'] . ")";
+    }
+    echo implode(", ", $deptNames);
+    echo "</p>";
+    echo "<p><a href='../index.php'>← Вернуться на главную страницу</a></p>";
+    echo "</div>";
+    
+    // Устанавливаем роль по умолчанию для отображения
+    $userRole = 'guest';
+}
 
 echo "<link rel=\"stylesheet\" href=\"sheets.css\">";
 /** ---------------------------------------------------------------------------------------------------------------- */
 /**                                                  Блок авторизации                                                */
 /** ---------------------------------------------------------------------------------------------------------------- */
 
-/**  Проверка ввода имени и пароля */
-if ((isset($_POST['user_name']))&&(!$_SESSION)) {
-    if (!$_POST['user_name']) {
-        echo '<div class="alert">'
-            . 'вы не ввели имя'
-            . '</div><p><div class="center">'
-            . '<a href="index.php">назад</a></div>';
-        exit;
-    }
-}
-
-if ((isset($_POST['user_pass']))&&(!$_SESSION)) {
-    if (!$_POST['user_pass']) {
-        echo '<div class="alert">'
-            . 'вы не ввели пароль'
-            . '</div><p><div class="center">'
-            . '<a href="index.php">назад</a></div>';
-        exit;
-    }
-}
-
-if ((isset($_SESSION['user'])&&(isset($_SESSION['workshop'])))){
-
-    $user = $_SESSION['user'];
-    $workshop = $_SESSION['workshop'];
-    $advertisement = '~~~~~';
-
-}else{
-
-    $user = $_GET['user_name'];
-    $password = $_GET['user_pass'];
-    $workshop = $_GET['workshop'];
-    $advertisement = 'SOME INFORMATION';
-
-
-    /** Подключаемся к БД */
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        /** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'
-            . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-            . "Ошибка: " . $mysqli->connect_error . "\n";
-        exit;
-    }
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM users WHERE user = '$user';";
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n"
-            . "Запрос: " . $sql . "\n"
-            . "Номер ошибки: " . $mysqli->errno . "\n"
-            . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-    /** Разбираем результат запроса */
-    if ($result->num_rows === 0) {
-        // Упс! в запросе нет ни одной строки!
-        echo '<div class="alert">'
-            . 'Нет такого пользователя'
-            . '</div><p><div class="center">'
-            . '<a href="index.php">назад</a></div>';
-        exit;
-    }
-
-    /** Разбор массива значений  */
-    $user_data = $result->fetch_assoc();
-
-    /** Проверка пароля */
-    if ($password != $user_data['pass']) {
-        echo '<div class="alert">'
-            . 'Ошибка доступа'
-            . '</div><p><div class="center">'
-            . '<a href="index.php">назад</a></div>';
-        exit;
-    }
-
-    /** Проверка соответствия уровня доступа выбранному значению участка */
-    $access = false;//маркер доступа
-    switch ($_GET['workshop']) {
-        case 'ZU':
-            if ($user_data['ZU'] > 0) $access = true;
-            break;
-        case 'U1':
-            if ($user_data['U1'] > 0) $access = true;
-            break;
-        case 'U2':
-            if ($user_data['U2'] > 0) $access = true;
-            break;
-        case 'U3':
-            if ($user_data['U3'] > 0) $access = true;
-            break;
-        case 'U4':
-            if ($user_data['U4'] > 0) $access = true;
-            break;
-
-    }
-
-    /** Если выбран участок к которому нет доступа */
-    if (!$access) {
-        echo '<div class="alert">'
-            . 'Доступ к данному подразделению закрыт'
-            . '</div><p><div class="center">'
-            . '<a href="index.php">назад</a></div>';
-        exit;
-    }
-    /** Регистрация имени пользователя в сессии */
-    $_SESSION['user'] = $user;
-    $_SESSION['workshop'] = $workshop;
-}
+// Устанавливаем переменные для совместимости со старым кодом
+$workshop = $currentDepartment;
+$advertisement = 'Информация';
 
 
 //echo '<title>'.$workshop.'</title>';
@@ -149,8 +113,25 @@ if (is_edit_access_granted()){
 }
 
 echo "</td><td width='80%'><!--#application_name=--><br>$application_name<br></td>"
-    ."<td >Пользователь: $user<br><a href='logout.php'>выход из системы</a></td></tr>"
-    ."<tr height='10%' align='center' ><td colspan='3'>#attention block<br>";
+    ."<td ><!-- Панель авторизации перенесена вверх --></td></tr>";
+    
+// Добавляем аккуратную панель авторизации
+echo "<!-- Аккуратная панель авторизации -->
+<div style='position: fixed; top: 10px; right: 10px; background: white; padding: 12px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; border: 1px solid #e5e7eb;'>
+    <div style='display: flex; align-items: center; gap: 12px;'>
+        <div style='width: 32px; height: 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 14px;'>
+            " . mb_substr($user['full_name'] ?? 'П', 0, 1, 'UTF-8') . "
+        </div>
+        <div>
+            <div style='font-weight: 600; font-size: 14px; color: #1f2937;'>" . htmlspecialchars($user['full_name'] ?? 'Пользователь') . "</div>
+            <div style='font-size: 12px; color: #6b7280;'>" . htmlspecialchars($user['phone'] ?? '') . "</div>
+            <div style='font-size: 11px; color: #9ca3af;'>" . $currentDepartment . " • " . ucfirst($userRole ?? 'guest') . "</div>
+        </div>
+        <a href='../auth/logout.php' style='padding: 6px 12px; background: #f3f4f6; color: #374151; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: 500; transition: background-color 0.2s;' onmouseover='this.style.background=\"#e5e7eb\"' onmouseout='this.style.background=\"#f3f4f6\"'>Выход</a>
+    </div>
+</div>";
+
+echo "<tr height='10%' align='center' ><td colspan='3'>#attention block<br>";
 
 /** Раздел объявлений */
 echo $advertisement."</td></tr>";
