@@ -12,7 +12,7 @@ initAuthSystem();
 
 // Запуск сессии
 if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+session_start();
 }
 
 $auth = new AuthManager();
@@ -102,9 +102,7 @@ echo '</head>';
 echo "<table  width=100% height=100% style='background-color: #6495ed' >"
     ."<tr height='10%' align='center' style='background-color: #dedede'><td width='20%' >Подразделение: U4";
 
-if (is_admin($user)){
     edit_access_button_draw();
-}
 
 if (is_edit_access_granted()){
     echo '<div id = "alert_div_1" style="width: 220; height: 5; background-color: lightgreen;"></div><p>';
@@ -127,6 +125,7 @@ echo "<!-- Аккуратная панель авторизации -->
             <div style='font-size: 12px; color: #6b7280;'>" . htmlspecialchars($user['phone'] ?? '') . "</div>
             <div style='font-size: 11px; color: #9ca3af;'>" . $currentDepartment . " • " . ucfirst($userRole ?? 'guest') . "</div>
         </div>
+        <a href='../auth/change-password.php' style='padding: 4px 8px; background: transparent; color: #9ca3af; text-decoration: none; border-radius: 3px; font-size: 11px; font-weight: 400; transition: all 0.2s; border: 1px solid #e5e7eb;' onmouseover='this.style.background=\"#f9fafb\"; this.style.color=\"#6b7280\"; this.style.borderColor=\"#d1d5db\"' onmouseout='this.style.background=\"transparent\"; this.style.color=\"#9ca3af\"; this.style.borderColor=\"#e5e7eb\"'>Пароль</a>
         <a href='../auth/logout.php' style='padding: 6px 12px; background: #f3f4f6; color: #374151; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: 500; transition: background-color 0.2s;' onmouseover='this.style.background=\"#e5e7eb\"' onmouseout='this.style.background=\"#f3f4f6\"'>Выход</a>
     </div>
 </div>";
@@ -222,11 +221,51 @@ if ($result->num_rows === 0) { echo "В базе нет ни одной заяв
 
 /** Разбор массива значений  */
 echo '<form action="show_order.php" method="post" target="_blank" >';
-while ($orders_data = $result->fetch_assoc()){
-    if ( $orders_data['hide'] != 1){
-        echo "<input type='submit' name='order_number' value=".$orders_data['order_number']." style=\"height: 20px; width: 215px\">";
 
+// Группируем заявки для отображения
+$orders_list = [];
+while ($orders_data = $result->fetch_assoc()){
+    if ($orders_data['hide'] != 1){
+        $order_num = $orders_data['order_number'];
+        if (!isset($orders_list[$order_num])) {
+            $orders_list[$order_num] = $orders_data;
+        }
     }
+}
+
+// Выводим уникальные заявки с прогрессом
+foreach ($orders_list as $order_num => $orders_data){
+    // Расчет прогресса для заявки
+    $total_planned = 0;
+    $total_produced = 0;
+    
+    // Получаем общее количество по заявке
+    $sql_total = "SELECT SUM(count) as total FROM orders WHERE order_number = '$order_num'";
+    if ($res_total = $mysqli->query($sql_total)) {
+        if ($row_total = $res_total->fetch_assoc()) {
+            $total_planned = (int)$row_total['total'];
+        }
+    }
+    
+    // Получаем произведенное количество
+    $sql_produced = "SELECT SUM(count_of_filters) as produced FROM manufactured_production WHERE name_of_order = '$order_num'";
+    if ($res_produced = $mysqli->query($sql_produced)) {
+        if ($row_produced = $res_produced->fetch_assoc()) {
+            $total_produced = (int)$row_produced['produced'];
+        }
+    }
+    
+    // Вычисляем процент
+    $progress = 0;
+    if ($total_planned > 0) {
+        $progress = round(($total_produced / $total_planned) * 100);
+    }
+    
+    // Формируем кнопку с меньшим шрифтом для процента
+    echo "<button type='submit' name='order_number' value='{$order_num}' style='height: 35px; width: 215px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; padding: 0 12px; margin-bottom: 8px;' title='Прогресс выполнения: {$progress}%'>";
+    echo "<span style='font-size: 13px; flex: 1; text-align: center;'>{$order_num}</span>";
+    echo "<span style='font-size: 10px; opacity: 0.8; margin-left: 8px;'>[{$progress}%]</span>";
+    echo "</button>";
 }
 
 echo '</form>';
